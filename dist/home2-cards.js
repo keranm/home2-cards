@@ -1355,6 +1355,19 @@
       const d = this._config.entity.split(".")[0];
       return d === "cover" ? "Open" : d === "vacuum" ? "Clean" : "On";
     }
+    /* Draw the slider at a percentage: fill width plus the handle riding the
+       fill edge, kept inside the track at both extremes. */
+    _paintBar(pct) {
+      const bar = this.$("#bar");
+      if (!bar) return;
+      this.$("#fillx").style.width = pct + "%";
+      this.$("#gl").textContent = pct > 0 ? pct + "%" : "Off";
+      const thumb = this.$("#thumb");
+      const w = bar.clientWidth;
+      if (!w) { requestAnimationFrame(() => this._paintBar(pct)); return; } // not laid out yet
+      const TW = 30, PAD = 4;
+      thumb.style.left = clamp((pct / 100) * w - TW / 2, PAD, w - TW - PAD) + "px";
+    }
     _css() {
       return `
         .card{padding:13px 15px 14px;display:flex;flex-direction:column;gap:11px;overflow:hidden}
@@ -1372,8 +1385,12 @@
           touch-action:none;user-select:none}
         .bar .fillx{position:absolute;left:0;top:0;bottom:0;width:0;
           background:linear-gradient(90deg,var(--h2-fill-a),var(--h2-fill-b));transition:width .25s}
-        .bar .bi{position:relative;color:var(--h2-muted);display:grid;place-items:center;transition:color .25s}
-        :host([on]) .bar .bi{color:#fff}
+        /* The icon is the handle — it rides the fill edge, so the control
+           looks like the thing it is instead of a bar with a badge on it. */
+        .bar .thumb{position:absolute;top:4px;left:0;width:30px;height:30px;border-radius:9px;
+          background:var(--h2-card);box-shadow:0 1px 3px rgba(20,24,60,.22);
+          display:grid;place-items:center;color:var(--h2-accent);transition:left .25s}
+        .bar.dragging .fillx,.bar.dragging .thumb{transition:none}
         .bar .gl{position:relative;margin-left:auto;font-size:12.5px;font-weight:700;
           color:var(--h2-muted);transition:color .25s}
         :host([on]) .bar .gl{color:rgba(255,255,255,.9)}
@@ -1392,7 +1409,8 @@
       const kind = this._kind();
       const control = kind === "slider"
         ? `<div class="bar" id="bar"><span class="fillx" id="fillx"></span>
-             <span class="bi">${icon(ic, 17)}</span><span class="gl tnum" id="gl"></span></div>`
+             <span class="thumb" id="thumb">${icon(ic, 17)}</span>
+             <span class="gl tnum" id="gl"></span></div>`
         : kind === "seg"
         ? `<div class="seg" id="seg">
              <button data-v="off">Off</button>
@@ -1441,8 +1459,7 @@
         const set = (clientX, commit) => {
           const r = bar.getBoundingClientRect();
           const pct = Math.round(clamp((clientX - r.left) / r.width, 0, 1) * 100);
-          this.$("#fillx").style.width = pct + "%";
-          this.$("#gl").textContent = pct > 0 ? pct + "%" : "Off";
+          this._paintBar(pct);
           this.toggleAttribute("on", pct > 0);
           if (commit) {
             this._dragging = false;
@@ -1456,10 +1473,12 @@
           ev.stopPropagation();
           this._dragging = true;
           bar.setPointerCapture(ev.pointerId);
+          bar.classList.add("dragging");
           set(ev.clientX, false);
           const mv = (e2) => set(e2.clientX, false);
           const up = (e2) => { bar.removeEventListener("pointermove", mv);
-            bar.removeEventListener("pointerup", up); set(e2.clientX, true); };
+            bar.removeEventListener("pointerup", up);
+            bar.classList.remove("dragging"); set(e2.clientX, true); };
           bar.addEventListener("pointermove", mv);
           bar.addEventListener("pointerup", up);
         });
@@ -1509,8 +1528,7 @@
         // Don't fight the user's finger with an incoming state update.
         if (!this._dragging) {
           const pct = on ? Math.round((s.attributes.brightness || 255) / 2.55) : 0;
-          this.$("#fillx").style.width = pct + "%";
-          this.$("#gl").textContent = pct > 0 ? pct + "%" : "Off";
+          this._paintBar(pct);
           this.$("#st").textContent = on ? `On · ${pct}%` : this._stateLabel(s);
           this.toggleAttribute("on", on);
         }
