@@ -28,7 +28,7 @@
  */
 (function () {
   "use strict";
-  const VERSION = "0.3.0";
+  const VERSION = "0.3.1";
 
   /* This file can legitimately be evaluated twice — once at frontend bootstrap
      via `frontend: extra_module_url:`, and again as a HACS Lovelace resource,
@@ -1343,17 +1343,36 @@
     /* Dimmable lights get a real slider on the card; everything else gets a
        two-state segment. Either way the card stays about half the height of
        the old tile and says more. */
+    /* Only entities you can actually act on get a control. A contact sensor
+       reporting the garage door is read-only — offering it an Off/On segment
+       promises something the card can't deliver. */
+    _controllable() {
+      const d = this._config.entity.split(".")[0];
+      return ["light", "switch", "fan", "input_boolean", "media_player", "climate",
+              "cover", "vacuum", "lock", "humidifier", "water_heater"].includes(d);
+    }
     _kind() {
       const s = this._st(this._config.entity);
       const domain = this._config.entity.split(".")[0];
-      if (this._config.control === "none") return "none";
+      if (this._config.control === "none" || !this._controllable()) return "none";
       if (domain !== "light") return "seg";
       const modes = (s && s.attributes.supported_color_modes) || [];
       return modes.length === 1 && modes[0] === "onoff" ? "seg" : "slider";
     }
-    _segLabel() {
-      const d = this._config.entity.split(".")[0];
-      return d === "cover" ? "Open" : d === "vacuum" ? "Clean" : "On";
+    /* Say what the action does, in the words the device uses. */
+    _segLabels() {
+      const c = this._config;
+      const d = c.entity.split(".")[0];
+      const s = this._st(c.entity);
+      const dc = (s && s.attributes.device_class) || c.device_class;
+      if (c.seg_labels) return c.seg_labels;                 // explicit override
+      if (d === "cover") return ["Closed", "Open"];
+      if (d === "lock") return ["Locked", "Unlocked"];
+      if (d === "vacuum") return ["Dock", "Clean"];
+      if (d === "climate") return ["Off", "On"];
+      if (d === "media_player") return ["Off", "On"];
+      if (dc === "garage" || dc === "door" || dc === "window") return ["Closed", "Open"];
+      return ["Off", "On"];
     }
     /* Draw the slider at a percentage: fill width plus the handle riding the
        fill edge, kept inside the track at both extremes. */
@@ -1412,9 +1431,10 @@
              <span class="thumb" id="thumb">${icon(ic, 17)}</span>
              <span class="gl tnum" id="gl"></span></div>`
         : kind === "seg"
-        ? `<div class="seg" id="seg">
-             <button data-v="off">Off</button>
-             <button data-v="on">${esc(this._segLabel())}</button></div>`
+        ? (() => { const [off, on] = this._segLabels();
+            return `<div class="seg" id="seg">
+              <button data-v="off">${esc(off)}</button>
+              <button data-v="on">${esc(on)}</button></div>`; })()
         : "";
       return `<div class="card h2-tap" tabindex="0" role="button">
         <div class="row"><span class="ic">${icon(ic, 21)}</span>
