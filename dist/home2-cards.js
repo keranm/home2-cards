@@ -377,6 +377,12 @@
           --ha-card-border-radius:var(--h2-radius);
           --ha-card-box-shadow:var(--h2-shadow);
           --ha-card-border-width:0;}
+        /* Cards already set .card{height:100%}, but that percentage resolves
+           against the custom-element host, which has no height of its own — so
+           it collapsed to auto and every card in a row ended up a different
+           height. Giving the host the stretched cell height makes it resolve. */
+        .cell>*{height:100%}
+        .cell.sect>*{height:auto}
         .cell.sect{align-self:end;padding:14px 4px 0;}
         .cell.sect h2{font-size:14px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--h2-muted);}
         ${[1,2,3,4,5,6,7,8,9,10,11,12].map(n=>`.c${n}{grid-column:span ${n}}`).join("")}
