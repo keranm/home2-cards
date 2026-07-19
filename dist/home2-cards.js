@@ -5,21 +5,48 @@
  * pastel design language. No dependencies — plain web components, one file.
  *
  * Cards: home2-layout, home2-chips, home2-clock, home2-weather, home2-status,
- *        home2-device, home2-energy, home2-batteries, home2-room,
+ *        home2-device, home2-energy, home2-batteries, home2-alerts, home2-room,
  *        home2-thermostat, home2-zone, home2-camera, home2-theme
  *
  * Colourways: lavender (default), eucalypt, ocean, sunset, slate — pick with
  * the home2-theme card or per-card `colourway:` option. Light + dark automatic
  * (follows Home Assistant's dark mode).
+ *
+ * Two rules the collection holds itself to:
+ *
+ *   1. Colour means state, not theme. The accent (lavender &c.) is decoration
+ *      and belongs to controls; --h2-good / --h2-warn / --h2-crit mean
+ *      something and belong to data. A value you have to *read* to understand
+ *      has failed — it should be scannable from across the room.
+ *
+ *   2. Motion is earned by touch. Hover lifts, press compresses, a state
+ *      change confirms itself — and then everything goes still. The only
+ *      ambient animation in the collection is the weather hero, which is
+ *      depicting live conditions, plus a single breathing dot for a battery
+ *      that is genuinely about to die. Anything that pulses indefinitely
+ *      stops being information and becomes wallpaper.
  */
 (function () {
   "use strict";
-  const VERSION = "0.1.0";
+  const VERSION = "0.2.0";
 
   /* ------------------------------------------------------------------ *
    * Colourways
    * ------------------------------------------------------------------ */
-  const SEMANTIC = { good: "#55b287", warn: "#dfa93f", crit: "#dd7490" };
+  /* Semantic colour is deliberately NOT the accent — it means state, not theme.
+     Soft variants are backgrounds; the solid variants are ink and edges. */
+  const SEMANTIC = {
+    light: {
+      good: "#2fa871", goodSoft: "#dcf1e7",
+      warn: "#dd8f30", warnSoft: "#fae9d6",
+      crit: "#d34b4b", critSoft: "#f9dcdc",
+    },
+    dark: {
+      good: "#46ce8c", goodSoft: "#17392b",
+      warn: "#f2a957", warnSoft: "#3d2a13",
+      crit: "#f06a6a", critSoft: "#401c1c",
+    },
+  };
   const PALETTES = {
     lavender: {
       label: "Lavender",
@@ -128,21 +155,24 @@
     window.dispatchEvent(new CustomEvent(CW_EVENT, { detail: name }));
   };
 
-  const varsBlock = (p) => `
+  const varsBlock = (p, sem, isDark) => `
     --h2-bg:${p.bg}; --h2-bg-glow:${p.bgGlow}; --h2-card:${p.card}; --h2-card-soft:${p.cardSoft};
     --h2-ink:${p.ink}; --h2-ink-strong:${p.inkStrong}; --h2-muted:${p.muted}; --h2-faint:${p.faint};
     --h2-accent:${p.accent}; --h2-accent-soft:${p.accentSoft}; --h2-fill-a:${p.fillA}; --h2-fill-b:${p.fillB};
     --h2-hero-a:${p.heroA}; --h2-hero-b:${p.heroB};
     --h2-shadow:${p.shadow}; --h2-shadow-lift:${p.shadowLift};
     --h2-toggle-off:${p.toggleOff}; --h2-knob-off:${p.knobOff};
-    --h2-good:${SEMANTIC.good}; --h2-warn:${SEMANTIC.warn}; --h2-crit:${SEMANTIC.crit};
+    --h2-good:${sem.good}; --h2-good-soft:${sem.goodSoft};
+    --h2-warn:${sem.warn}; --h2-warn-soft:${sem.warnSoft};
+    --h2-crit:${sem.crit}; --h2-crit-soft:${sem.critSoft};
+    --h2-stripe:${isDark ? "rgba(255,255,255,.13)" : "rgba(255,255,255,.5)"};
     --h2-on-fill:#ffffff; --h2-on-fill-dim:rgba(255,255,255,.62); --h2-radius:26px;`;
 
   /* Theme CSS: light by default, dark when host has [dark] attribute. */
   const themeCSS = (cw) => {
     const pal = PALETTES[cw] || PALETTES.lavender;
-    return `:host{${varsBlock(pal.light)}}
-      :host([dark]){${varsBlock(pal.dark)}}
+    return `:host{${varsBlock(pal.light, SEMANTIC.light, false)}}
+      :host([dark]){${varsBlock(pal.dark, SEMANTIC.dark, true)}}
       *{box-sizing:border-box;margin:0}
       button{border:0;font:inherit;cursor:pointer;background:none;color:inherit;padding:0}
       .h2-label{font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--h2-muted)}
@@ -154,7 +184,27 @@
   const cardShell = `
     :host{display:block}
     .card{background:var(--h2-card);border-radius:var(--h2-radius);box-shadow:var(--h2-shadow);
-      padding:24px;position:relative;height:100%;min-height:0}`;
+      padding:24px;position:relative;height:100%;min-height:0}
+
+    /* ---- shared interaction layer ----------------------------------- *
+     * Motion is earned by touch, never ambient. Anything the user can act
+     * on opts in with .h2-tap; hover lifts, press compresses. Hover is
+     * gated on a real pointer so touch devices don't get a stuck :hover. */
+    .h2-tap{transition:transform .2s cubic-bezier(.2,.8,.3,1),box-shadow .2s;cursor:pointer}
+    @media(hover:hover){.h2-tap:hover{transform:translateY(-3px);box-shadow:var(--h2-shadow-lift)}}
+    .h2-tap:active{transform:translateY(-1px) scale(.978);transition-duration:.09s}
+    .h2-tap:focus-visible{outline:2px solid var(--h2-accent);outline-offset:3px}
+    /* row-shaped targets shift instead of lifting — a list shouldn't pop */
+    .h2-tap-row{transition:background .18s,transform .18s cubic-bezier(.2,.8,.3,1);cursor:pointer;
+      border-radius:14px}
+    @media(hover:hover){.h2-tap-row:hover{background:var(--h2-card-soft);transform:translateX(3px)}}
+    .h2-tap-row:active{transform:translateX(3px) scale(.99)}
+    .h2-tap-row:focus-visible{outline:2px solid var(--h2-accent);outline-offset:1px}
+    @keyframes h2-breathe{0%,100%{opacity:1}50%{opacity:.45}}
+    @media(prefers-reduced-motion:reduce){
+      *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;
+        transition-duration:.01ms!important}
+    }`;
 
   /* ------------------------------------------------------------------ *
    * Icons (thin-line set, 24x24 viewBox path data)
@@ -495,26 +545,67 @@
   class H2Status extends H2Base {
     _css() {
       return `
-        .list{display:flex;flex-direction:column;gap:4px;margin-top:14px}
-        .item{display:flex;align-items:center;gap:14px;padding:11px 4px}
-        .item .ic{color:var(--h2-accent);flex:none}
-        .v{font-weight:700;font-size:15.5px;color:var(--h2-ink-strong)}
+        .list{display:flex;flex-direction:column;gap:2px;margin-top:14px}
+        .item{display:flex;align-items:center;gap:13px;padding:10px 11px}
+        /* The icon tile carries state, so 49% and 94% stop looking identical. */
+        .tile{width:34px;height:34px;border-radius:11px;flex:none;display:grid;place-items:center;
+          background:var(--h2-accent-soft);color:var(--h2-accent);transition:background .35s,color .35s}
+        .item[data-tone=good] .tile{background:var(--h2-good-soft);color:var(--h2-good)}
+        .item[data-tone=warn] .tile{background:var(--h2-warn-soft);color:var(--h2-warn)}
+        .item[data-tone=crit] .tile{background:var(--h2-crit-soft);color:var(--h2-crit)}
+        .v{font-weight:700;font-size:15.5px;color:var(--h2-ink-strong);transition:color .35s}
+        .item[data-tone=good] .v{color:var(--h2-good)}
+        .item[data-tone=warn] .v{color:var(--h2-warn)}
+        .item[data-tone=crit] .v{color:var(--h2-crit)}
         .k{font-size:12.5px;color:var(--h2-muted);font-weight:500}`;
     }
     _html() {
       const items = (this._config.items || []).map((it, i) => `
-        <div class="item" data-i="${i}">${icon(it.icon || "generic", 26)}
+        <div class="item ${it.entity ? "h2-tap-row" : ""}" data-i="${i}" data-tone="neutral"
+             ${it.entity ? 'tabindex="0" role="button"' : ""}>
+          <span class="tile">${icon(it.icon || "generic", 19)}</span>
           <div><div class="v"></div><div class="k">${esc(it.name || "")}</div></div>
         </div>`).join("");
       return `<div class="card"><div class="h2-label">${esc(this._config.title || "Right now")}</div>
         <div class="list">${items}</div></div>`;
     }
+    _bind() {
+      this.$$(".item[data-i]").forEach((el) => {
+        const it = this._config.items[+el.dataset.i];
+        if (!it || !it.entity) return;
+        const open = () => this.dispatchEvent(new CustomEvent("hass-more-info",
+          { bubbles: true, composed: true, detail: { entityId: it.entity } }));
+        el.addEventListener("click", open);
+        el.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+        });
+      });
+    }
     _update() {
       (this._config.items || []).forEach((it, i) => {
-        const el = this.$(`.item[data-i="${i}"] .v`);
-        if (!el) return;
-        el.textContent = this._value(it);
+        const row = this.$(`.item[data-i="${i}"]`);
+        if (!row) return;
+        row.querySelector(".v").textContent = this._value(it);
+        row.dataset.tone = this._tone(it);
       });
+    }
+    /* Tone is explicit where the caller knows best, derived where we do. */
+    _tone(it) {
+      if (it.tone && it.tone !== "auto") return it.tone;
+      if (it.type === "battery") {
+        const soc = num(this._sv(it.soc), 0);
+        return batLevel(soc, "pack", it);
+      }
+      if (it.type === "pm25") {
+        const v = num(this._sv(it.entity), 1);
+        if (v == null) return "neutral";
+        return v <= 9 ? "good" : v <= 35 ? "neutral" : v <= 55 ? "warn" : "crit";
+      }
+      const st = this._sv(it.entity);
+      if (st == null) return "neutral";
+      if (it.good_when != null) return [].concat(it.good_when).includes(st) ? "good" : "warn";
+      if (it.warn_when != null) return [].concat(it.warn_when).includes(st) ? "warn" : "good";
+      return "neutral";
     }
     _value(it) {
       if (it.type === "battery") {
@@ -818,8 +909,15 @@
     _css() {
       return `
         .card{min-height:150px;display:flex;flex-direction:column;justify-content:space-between;
-          cursor:pointer;transition:box-shadow .25s, transform .15s;}
-        .card:active{transform:scale(.985)}
+          overflow:hidden;transition:background .35s}
+        /* Ripple fires from the point of contact on a state change only —
+           the tile confirms it heard you, then goes quiet again. */
+        .ripple{position:absolute;width:340px;height:340px;border-radius:50%;pointer-events:none;
+          transform:translate(-50%,-50%) scale(0);opacity:.26;background:currentColor;
+          color:var(--h2-accent)}
+        :host([on]) .ripple{color:#fff}
+        @keyframes h2-ripple{to{transform:translate(-50%,-50%) scale(1);opacity:0}}
+        .ripple.go{animation:h2-ripple .58s cubic-bezier(.25,.7,.35,1) forwards}
         .top{display:flex;justify-content:space-between;align-items:flex-start}
         .top .ic{color:var(--h2-accent)}
         .room{font-size:12px;color:var(--h2-muted);font-weight:600;margin-bottom:2px}
@@ -841,7 +939,8 @@
       const c = this._config;
       const domain = c.entity.split(".")[0];
       const ic = c.icon || DOMAIN_ICONS[domain] || "plug";
-      return `<div class="card">
+      return `<div class="card h2-tap" tabindex="0" role="button">
+        <span class="ripple" id="rp"></span>
         <div class="top">${icon(ic, 34)}<div class="toggle" id="tg"></div></div>
         <div class="bottom">
           <div>${c.room ? `<div class="room">${esc(c.room)}</div>` : ""}<div class="name" id="nm"></div></div>
@@ -850,12 +949,30 @@
       </div>`;
     }
     _bind() {
-      this.$("#tg").addEventListener("click", (ev) => { ev.stopPropagation(); this._toggle(); });
-      this.$(".card").addEventListener("click", () => {
+      const act = (ev) => {
         const tap = this._config.tap || "toggle";
-        if (tap === "toggle") this._toggle();
+        if (tap === "toggle") { this._ripple(ev); this._toggle(); }
         else if (tap === "more-info") this._moreInfo();
+      };
+      this.$("#tg").addEventListener("click", (ev) => {
+        ev.stopPropagation(); this._ripple(ev); this._toggle();
       });
+      const card = this.$(".card");
+      card.addEventListener("click", act);
+      card.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); act(ev); }
+      });
+    }
+    _ripple(ev) {
+      const rp = this.$("#rp"), card = this.$(".card");
+      if (!rp || !card) return;
+      const box = card.getBoundingClientRect();
+      const hasPoint = ev && ev.clientX != null && (ev.clientX || ev.clientY);
+      rp.style.left = (hasPoint ? ev.clientX - box.left : box.width / 2) + "px";
+      rp.style.top = (hasPoint ? ev.clientY - box.top : box.height / 2) + "px";
+      rp.classList.remove("go");
+      void rp.offsetWidth; // restart the animation
+      rp.classList.add("go");
     }
     _moreInfo() {
       this.dispatchEvent(new CustomEvent("hass-more-info",
@@ -1026,40 +1143,249 @@
    * home2-batteries — labelled battery bars.
    * config: { title, low: 35, items: [{entity, name}] }
    * ------------------------------------------------------------------ */
+  /* Two kinds of battery, judged on different questions.
+     A rechargeable pack answers "will it last the day" — it recovers tonight.
+     A replaceable cell answers "do I need to buy one" — it never recovers, so
+     its amber band starts far earlier and its low state is an errand. */
+  const BAT_BANDS = { pack: { crit: 20, warn: 60 }, cell: { crit: 25, warn: 60 } };
+  const batLevel = (pct, kind, cfg) => {
+    const band = Object.assign({}, BAT_BANDS[kind] || BAT_BANDS.pack);
+    if (cfg && cfg.crit != null) band.crit = cfg.crit;
+    if (cfg && cfg.warn != null) band.warn = cfg.warn;
+    if (pct == null) return "good";
+    return pct <= band.crit ? "crit" : pct <= band.warn ? "warn" : "good";
+  };
+
+  /* Charging comes in two entity shapes: the companion app's text sensor
+     (Charging / Not Charging / Full) and a battery_charging binary_sensor. */
+  const chargeState = (st) => {
+    if (!st) return "na";
+    const v = String(st.state).toLowerCase();
+    if (v === "unavailable" || v === "unknown") return "na";
+    if (st.attributes.device_class === "battery_charging") return v === "on" ? "charging" : "no";
+    if (v === "full" || v === "charging_completed") return "full";
+    if (v.includes("not")) return "no";
+    if (v.includes("charging")) return "charging";
+    return "no";
+  };
+
   class H2Batteries extends H2Base {
     _css() {
       return `
-        .list{display:flex;flex-direction:column;gap:13px;margin-top:16px}
-        .row{display:grid;grid-template-columns:minmax(64px,86px) 1fr 42px;align-items:center;gap:12px}
-        .n{font-size:13.5px;font-weight:600;color:var(--h2-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-        .bar{height:9px;border-radius:999px;background:var(--h2-card-soft);overflow:hidden}
-        .bar i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--h2-fill-a),var(--h2-fill-b));transition:width .6s}
-        .row.low .bar i{background:var(--h2-warn)}
-        .row.crit .bar i{background:var(--h2-crit)}
-        .v{font-size:13px;font-weight:700;color:var(--h2-muted);text-align:right}`;
+        .list{display:flex;flex-direction:column;gap:11px;margin-top:16px}
+        .cell{position:relative;border-radius:15px;overflow:hidden;background:var(--h2-toggle-off);
+          padding:13px 15px;display:flex;justify-content:space-between;align-items:center;
+          isolation:isolate;gap:10px}
+        /* The fill IS the percentage — the whole row is the gauge, so it reads
+           from across the room instead of asking you to measure a 9px bar. */
+        .fill{position:absolute;inset:0;width:0;z-index:-1;border-radius:15px 0 0 15px;
+          transition:width .8s cubic-bezier(.3,.9,.3,1),background .4s}
+        .edge{position:absolute;top:0;bottom:0;left:0;width:3px;z-index:-1;
+          transition:left .8s cubic-bezier(.3,.9,.3,1),background .4s}
+        .cell[data-lvl=good] .fill{background:var(--h2-good-soft)}
+        .cell[data-lvl=warn] .fill{background:var(--h2-warn-soft)}
+        .cell[data-lvl=crit] .fill{background:var(--h2-crit-soft)}
+        .cell[data-lvl=good] .edge{background:var(--h2-good)}
+        .cell[data-lvl=warn] .edge{background:var(--h2-warn)}
+        .cell[data-lvl=crit] .edge{background:var(--h2-crit)}
+        .n{font-size:14.5px;font-weight:600;color:var(--h2-ink-strong);display:flex;align-items:center;
+          gap:9px;min-width:0}
+        .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .dot{width:8px;height:8px;border-radius:50%;flex:none}
+        .cell[data-lvl=good] .dot{background:var(--h2-good)}
+        .cell[data-lvl=warn] .dot{background:var(--h2-warn)}
+        .cell[data-lvl=crit] .dot{background:var(--h2-crit);animation:h2-breathe 2.4s ease-in-out infinite}
+        .v{font-size:15px;font-weight:700;white-space:nowrap;flex:none}
+        .cell[data-lvl=good] .v{color:var(--h2-good)}
+        .cell[data-lvl=warn] .v{color:var(--h2-warn)}
+        .cell[data-lvl=crit] .v{color:var(--h2-crit)}
+        .kind{font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+          color:var(--h2-faint);flex:none}
+        .cell[data-kind=cell][data-lvl=warn] .kind,
+        .cell[data-kind=cell][data-lvl=crit] .kind{color:var(--h2-crit)}
+        /* Charging keeps the level colour — "being handled" and "where it is"
+           are different facts and you want both — and adds directional motion. */
+        .flow{position:absolute;inset:0;width:0;z-index:-1;opacity:0;border-radius:15px 0 0 15px;
+          background-image:repeating-linear-gradient(115deg,transparent 0 13px,var(--h2-stripe) 13px 26px);
+          background-size:58px 100%;
+          transition:opacity .4s,width .8s cubic-bezier(.3,.9,.3,1)}
+        @keyframes h2-flow{to{background-position:58px 0}}
+        .cell[data-chg=charging] .flow{opacity:1;animation:h2-flow 1.1s linear infinite}
+        .cell[data-chg=charging] .dot{display:none}
+        .bolt{display:none;flex:none}
+        .cell[data-chg=charging] .bolt{display:block}
+        .cell[data-lvl=good] .bolt{color:var(--h2-good)}
+        .cell[data-lvl=warn] .bolt{color:var(--h2-warn)}
+        .cell[data-lvl=crit] .bolt{color:var(--h2-crit)}
+        .full{font-size:11.5px;font-weight:600;color:var(--h2-faint)}
+        .cell[data-unavail]{opacity:.5}`;
     }
     _html() {
       const rows = (this._config.items || []).map((it, i) => `
-        <div class="row" data-i="${i}"><span class="n">${esc(it.name || this._name(it.entity))}</span>
-          <span class="bar"><i></i></span><span class="v tnum"></span></div>`).join("");
+        <div class="cell h2-tap" data-i="${i}" tabindex="0" role="button">
+          <span class="fill"></span><span class="flow"></span><span class="edge"></span>
+          <span class="n"><span class="dot"></span>${icon("bolt", 13, "bolt")}<span
+            class="nm">${esc(it.name || this._name(it.entity))}</span>${
+            it.kind === "cell" ? `<span class="kind">${esc(it.cell_label || "coin cell")}</span>` : ""}</span>
+          <span class="v tnum"></span>
+        </div>`).join("");
       return `<div class="card"><div class="h2-label">${esc(this._config.title || "Batteries")}</div>
         <div class="list">${rows}</div></div>`;
     }
+    _bind() {
+      this.$$(".cell[data-i]").forEach((el) => {
+        const open = () => {
+          const it = this._config.items[+el.dataset.i];
+          this.dispatchEvent(new CustomEvent("hass-more-info",
+            { bubbles: true, composed: true, detail: { entityId: it.entity } }));
+        };
+        el.addEventListener("click", open);
+        el.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+        });
+      });
+    }
     _update() {
-      const low = this._config.low != null ? this._config.low : 35;
       (this._config.items || []).forEach((it, i) => {
-        const row = this.$(`.row[data-i="${i}"]`);
-        if (!row) return;
+        const el = this.$(`.cell[data-i="${i}"]`);
+        if (!el) return;
         const v = num(this._sv(it.entity), 0);
-        row.querySelector(".bar i").style.width = (v == null ? 0 : Math.max(2, v)) + "%";
-        row.querySelector(".v").textContent = v == null ? "—" : v + "%";
-        row.classList.toggle("crit", v != null && v <= 15);
-        row.classList.toggle("low", v != null && v > 15 && v <= low);
+        const kind = it.kind === "cell" ? "cell" : "pack";
+        const chg = it.charging ? chargeState(this._st(it.charging)) : "na";
+        const pct = v == null ? 0 : Math.max(0, Math.min(100, v));
+
+        el.dataset.lvl = batLevel(v, kind, it);
+        el.dataset.kind = kind;
+        el.dataset.chg = chg;
+        el.toggleAttribute("data-unavail", v == null);
+        el.querySelector(".fill").style.width = pct + "%";
+        el.querySelector(".flow").style.width = pct + "%";
+        el.querySelector(".edge").style.left = pct + "%";
+        el.querySelector(".v").innerHTML = v == null
+          ? "—"
+          : `${v}%${chg === "full" ? ' <span class="full">· full</span>' : ""}`;
       });
     }
     getCardSize() { return Math.max(2, Math.ceil(((this._config.items || []).length + 1) / 2)); }
   }
   customElements.define("home2-batteries", H2Batteries);
+
+  /* ------------------------------------------------------------------ *
+   * home2-alerts — "Needs attention".
+   *
+   * Two kinds of alert that must never look the same:
+   *   event     — happened once, wants you now (mail arrived). Announces
+   *               itself with a single arrival animation, then holds still.
+   *   condition — true until someone fixes it (dead cell, garage left open,
+   *               stale backup). Never animates: a thing that pulses for
+   *               three days becomes wallpaper.
+   *
+   * config: { title, hide_when_clear: false, alerts: [
+   *   { entity, kind: "event"|"condition", icon, on: "Mail waiting",
+   *     off: "No mail", severity: "warn"|"crit"|"accent", invert: false },
+   *   { type: "battery", entity, name, kind: "cell", crit: 25, warn: 60 } ] }
+   * ------------------------------------------------------------------ */
+  class H2Alerts extends H2Base {
+    _css() {
+      return `
+        .bar{display:flex;flex-wrap:wrap;gap:10px;margin-top:15px}
+        .a{display:inline-flex;align-items:center;gap:9px;padding:9px 15px 9px 12px;border-radius:999px;
+          font-size:13.5px;font-weight:700;position:relative;overflow:hidden}
+        .a .ic{flex:none}
+        .a[data-sev=crit]{background:var(--h2-crit-soft);color:var(--h2-crit)}
+        .a[data-sev=warn]{background:var(--h2-warn-soft);color:var(--h2-warn)}
+        .a[data-sev=accent]{background:var(--h2-accent-soft);color:var(--h2-accent)}
+        .a[data-sev=quiet]{background:var(--h2-card-soft);color:var(--h2-muted);font-weight:600}
+        .clear{font-size:13.5px;font-weight:600;color:var(--h2-muted);margin-top:15px;
+          display:flex;align-items:center;gap:9px}
+        .clear .ic{color:var(--h2-good)}
+        @keyframes h2-arrive{
+          0%{transform:scale(.82);opacity:0}
+          55%{transform:scale(1.06);opacity:1}
+          100%{transform:scale(1);opacity:1}}
+        @keyframes h2-sheen{to{left:135%}}
+        .a.arriving{animation:h2-arrive .5s cubic-bezier(.3,1.4,.5,1)}
+        .a.arriving::after{content:"";position:absolute;top:0;bottom:0;left:-45%;width:38%;
+          background:linear-gradient(100deg,transparent,rgba(255,255,255,.6),transparent);
+          animation:h2-sheen .85s ease-out .18s}`;
+    }
+    _html() {
+      return `<div class="card"><div class="h2-label">${esc(this._config.title || "Needs attention")}</div>
+        <div class="bar" id="bar"></div>
+        <div class="clear" id="clear" hidden>${icon("home", 18)}<span>All clear</span></div></div>`;
+    }
+    /* Returns the alert to show for an item, or null to omit it entirely. */
+    _resolve(it) {
+      if (it.type === "battery") {
+        const v = num(this._sv(it.entity), 0);
+        if (v == null) return null;
+        const kind = it.kind === "cell" ? "cell" : "pack";
+        const lvl = batLevel(v, kind, it);
+        if (lvl === "good") return null;
+        const name = it.name || this._name(it.entity);
+        const text = kind === "cell"
+          ? (lvl === "crit" ? `${name} — replace cell` : `${name} ${v}%`)
+          : `${name} ${v}%`;
+        return { kind: "condition", sev: lvl, icon: it.icon || "battery", text };
+      }
+      const st = this._st(it.entity);
+      if (!st) return null;
+      let on = stateOn(st.state);
+      if (it.invert) on = !on;
+      if (!on) {
+        if (it.off == null) return null;
+        return { kind: it.kind || "condition", sev: "quiet", icon: it.icon || "generic", text: it.off, off: true };
+      }
+      return {
+        kind: it.kind || "condition",
+        sev: it.severity || (it.kind === "event" ? "accent" : "warn"),
+        icon: it.icon || "generic",
+        text: it.on || capitalize(String(st.state)),
+      };
+    }
+    _update() {
+      const bar = this.$("#bar");
+      if (!bar) return;
+      const items = this._config.alerts || [];
+      const resolved = items.map((it) => this._resolve(it));
+      const active = resolved.filter((r) => r && !r.off);
+
+      // Rebuild only when the set actually changes, so a re-render never
+      // replays an arrival animation that already fired.
+      const sig = resolved.map((r) => (r ? `${r.sev}|${r.text}` : "")).join(" ");
+      const prev = this._sig;
+      if (sig === prev) return;
+      this._sig = sig;
+      const prevTexts = new Set((this._prevActive || []).map((r) => r.text));
+
+      bar.innerHTML = resolved.map((r) => r ? `
+        <span class="a h2-tap" data-sev="${r.sev}">${icon(r.icon, 15)}<span>${esc(r.text)}</span></span>` : "").join("");
+
+      // An event that has just appeared announces itself, once.
+      if (prev !== undefined) {
+        const els = [...bar.querySelectorAll(".a")];
+        resolved.filter(Boolean).forEach((r, i) => {
+          if (r.kind !== "event" || r.off || prevTexts.has(r.text)) return;
+          const el = els[i];
+          if (!el) return;
+          el.classList.add("arriving");
+          el.addEventListener("animationend", function done(ev) {
+            if (ev.animationName !== "h2-arrive") return;
+            el.classList.remove("arriving");
+            el.removeEventListener("animationend", done);
+          });
+        });
+      }
+      this._prevActive = active;
+
+      const clear = this.$("#clear");
+      const nothing = active.length === 0;
+      clear.hidden = !(nothing && this._config.hide_when_clear !== true);
+      bar.hidden = nothing && this._config.hide_when_clear === true;
+    }
+    getCardSize() { return 2; }
+  }
+  customElements.define("home2-alerts", H2Alerts);
 
   /* ------------------------------------------------------------------ *
    * home2-room — room summary: big temperature with trend, pills, toggle.
@@ -1092,7 +1418,8 @@
     }
     _html() {
       const c = this._config;
-      return `<div class="card">
+      const tappable = c.temperature ? " h2-tap" : "";
+      return `<div class="card${tappable}"${c.temperature ? ' tabindex="0" role="button"' : ""}>
         <div class="head">${icon(c.icon || "bed", 24)}<span class="n">${esc(c.name || "")}</span>
           ${c.toggle ? '<div class="toggle" id="tg"></div>' : ""}</div>
         <div class="temp tnum"><span id="tv">—</span><small>°</small><span id="ttr"></span></div>
@@ -1101,10 +1428,20 @@
     }
     _bind() {
       const tg = this.$("#tg");
-      if (tg) tg.addEventListener("click", () => {
+      if (tg) tg.addEventListener("click", (ev) => {
+        ev.stopPropagation();
         const t = this._config.toggle;
         const target = t.area ? { area_id: t.area } : { entity_id: t.entity };
         this._hass.callService("light", "toggle", target);
+      });
+      // The lift has to lead somewhere, or it's a lie.
+      if (!this._config.temperature) return;
+      const open = () => this.dispatchEvent(new CustomEvent("hass-more-info",
+        { bubbles: true, composed: true, detail: { entityId: this._config.temperature } }));
+      const card = this.$(".card");
+      card.addEventListener("click", open);
+      card.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); open(); }
       });
     }
     async _update() {
