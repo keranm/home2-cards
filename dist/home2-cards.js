@@ -28,7 +28,7 @@
  */
 (function () {
   "use strict";
-  const VERSION = "0.2.0";
+  const VERSION = "0.3.0";
 
   /* This file can legitimately be evaluated twice — once at frontend bootstrap
      via `frontend: extra_module_url:`, and again as a HACS Lovelace resource,
