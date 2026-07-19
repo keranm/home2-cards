@@ -175,6 +175,9 @@
     --h2-warn:${sem.warn}; --h2-warn-soft:${sem.warnSoft};
     --h2-crit:${sem.crit}; --h2-crit-soft:${sem.critSoft};
     --h2-stripe:${isDark ? "rgba(255,255,255,.13)" : "rgba(255,255,255,.5)"};
+    ${isDark
+      ? "--h2-e-solar:#f0b45c; --h2-e-batt:#e888b7; --h2-e-grid:#9a97f0; --h2-e-home:#5cb6d8;"
+      : "--h2-e-solar:#e9a63b; --h2-e-batt:#d9689e; --h2-e-grid:#7c7adb; --h2-e-home:#3fa0c4;"}
     --h2-on-fill:#ffffff; --h2-on-fill-dim:rgba(255,255,255,.62); --h2-radius:26px;`;
 
   /* Theme CSS: light by default, dark when host has [dark] attribute. */
@@ -975,8 +978,12 @@
       </div>`;
     }
     _bind() {
+      // The switch toggles; the card body opens more-info. HA already builds
+      // the right panel per domain — brightness and colour for a light,
+      // transport for a media player, setpoint and modes for climate — and
+      // defaulting the body to `toggle` stood in front of all of it.
       const act = (ev) => {
-        const tap = this._config.tap || "toggle";
+        const tap = this._config.tap || "more-info";
         if (tap === "toggle") { this._ripple(ev); this._toggle(); }
         else if (tap === "more-info") this._moreInfo();
       };
@@ -1053,21 +1060,38 @@
     _css() {
       return `
         .dia{width:100%;height:auto;display:block;margin:10px auto 4px;max-width:360px}
-        .dia .ring{fill:var(--h2-card-soft)}
-        .dia .nodeicon *{fill:none;stroke:var(--h2-accent);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
-        .dia .active .ring{fill:url(#h2gfill)}
+        .dia .ring{fill:var(--h2-card-soft);transition:fill .5s}
+        /* Each leg of the flow owns a colour, so the diagram reads without
+           the labels: solar amber, battery pink, grid indigo, house blue. */
+        .dia .nodeicon *{fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+        .dia #n-solar .nodeicon *{stroke:var(--h2-e-solar)}
+        .dia #n-batt  .nodeicon *{stroke:var(--h2-e-batt)}
+        .dia #n-grid  .nodeicon *{stroke:var(--h2-e-grid)}
+        .dia #n-home  .nodeicon *{stroke:var(--h2-e-home)}
+        .dia #n-solar.active .ring{fill:var(--h2-e-solar)}
+        .dia #n-batt.active  .ring{fill:var(--h2-e-batt)}
+        .dia #n-grid.active  .ring{fill:var(--h2-e-grid)}
+        .dia #n-home.active  .ring{fill:var(--h2-e-home)}
         .dia .active .nodeicon *{stroke:#fff}
-        .dia .track{stroke:var(--h2-faint);stroke-width:2;stroke-linecap:round;opacity:.45}
-        .dia .track.live{stroke:var(--h2-accent);opacity:1}
+        .dia .track{stroke:var(--h2-faint);stroke-width:2.4;stroke-linecap:round;opacity:.26}
+        .dia #t-solar.live{stroke:var(--h2-e-solar);opacity:1}
+        .dia #t-batt.live {stroke:var(--h2-e-batt);opacity:1}
+        .dia #t-grid.live {stroke:var(--h2-e-grid);opacity:1}
+        .dia #t-home.live {stroke:var(--h2-e-home);opacity:1}
         .dia .junction{fill:var(--h2-faint)}
         .dia .dot{fill:var(--h2-accent)}
+        .dia .dot.d-solar{fill:var(--h2-e-solar)}
+        .dia .dot.d-batt{fill:var(--h2-e-batt)}
+        .dia .dot.d-grid{fill:var(--h2-e-grid)}
+        .dia .dot.d-home{fill:var(--h2-e-home)}
         .dia .ev{font-size:13px;font-weight:700;fill:var(--h2-ink-strong)}
         .dia .ek{font-size:10.5px;font-weight:600;fill:var(--h2-muted)}
         .soc .bar{height:10px;border-radius:999px;background:var(--h2-card-soft);overflow:hidden;margin-top:6px}
-        .soc .bar i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--h2-fill-a),var(--h2-fill-b));transition:width .6s}
+        .soc .bar i{display:block;height:100%;border-radius:999px;background:var(--h2-e-batt);transition:width .6s}
         .soc .cap{display:flex;justify-content:space-between;font-size:12.5px;color:var(--h2-muted);font-weight:600;margin-top:7px}
         .arrays{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
-        .arrays span{background:var(--h2-card-soft);border-radius:999px;padding:6px 13px;font-size:12px;font-weight:600;color:var(--h2-muted)}
+        .arrays span{background:var(--h2-card-soft);border-radius:999px;padding:6px 13px;font-size:12px;font-weight:600;
+          color:var(--h2-muted);border-left:3px solid var(--h2-e-solar)}
         @media(prefers-reduced-motion:reduce){.dia .dot{display:none}}`;
     }
     _html() {
@@ -1134,24 +1158,24 @@
       const flows = [];
       const track = (id, live) => this.$("#" + id).classList.toggle("live", live);
       track("t-solar", solar > EPS);
-      if (solar > EPS) flows.push(`M160,70 L${J}`);
+      if (solar > EPS) flows.push(["solar", `M160,70 L${J}`]);
       track("t-batt", Math.abs(batt) > EPS);
-      if (batt > EPS) flows.push(`M78,130 L${J}`);
-      else if (batt < -EPS) flows.push(`M160,130 L78,130`);
+      if (batt > EPS) flows.push(["batt", `M78,130 L${J}`]);
+      else if (batt < -EPS) flows.push(["batt", `M160,130 L78,130`]);
       track("t-home", home > EPS);
-      if (home > EPS) flows.push(`M160,130 L242,130`);
+      if (home > EPS) flows.push(["home", `M160,130 L242,130`]);
       track("t-grid", Math.abs(grid) > EPS);
-      if (grid > EPS) flows.push(`M160,190 L${J}`);
-      else if (grid < -EPS) flows.push(`M160,130 L160,190`);
-      const sig = flows.join("|");
+      if (grid > EPS) flows.push(["grid", `M160,190 L${J}`]);
+      else if (grid < -EPS) flows.push(["grid", `M160,130 L160,190`]);
+      const sig = flows.map((f) => f.join(":")).join("|");
       if (sig !== this._flowSig) {
         this._flowSig = sig;
         const dots = this.$("#dots");
         dots.innerHTML = "";
         const NS = "http://www.w3.org/2000/svg";
-        flows.forEach((path) => {
+        flows.forEach(([key, path]) => {
           const dot = document.createElementNS(NS, "circle");
-          dot.setAttribute("r", "4"); dot.setAttribute("class", "dot");
+          dot.setAttribute("r", "4"); dot.setAttribute("class", "dot d-" + key);
           const m = document.createElementNS(NS, "animateMotion");
           m.setAttribute("dur", "2.4s"); m.setAttribute("repeatCount", "indefinite"); m.setAttribute("path", path);
           dot.appendChild(m); dots.appendChild(dot);
