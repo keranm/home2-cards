@@ -369,7 +369,14 @@
           background:radial-gradient(1200px 700px at 20% -10%, var(--h2-bg-glow), var(--h2-bg) 60%);}
         .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:20px;max-width:1560px;margin:0 auto;
           grid-auto-rows:minmax(0,auto);grid-auto-flow:dense;}
-        .cell{min-width:0}
+        /* Third-party cards render a real <ha-card> and take their shape from
+           HA's own custom properties. Hand ours down so anything dropped into
+           the layout — air-quality, power-flow, vacuum map — matches the
+           collection instead of sitting in the grid with square corners. */
+        .cell{min-width:0;
+          --ha-card-border-radius:var(--h2-radius);
+          --ha-card-box-shadow:var(--h2-shadow);
+          --ha-card-border-width:0;}
         .cell.sect{align-self:end;padding:14px 4px 0;}
         .cell.sect h2{font-size:14px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--h2-muted);}
         ${[1,2,3,4,5,6,7,8,9,10,11,12].map(n=>`.c${n}{grid-column:span ${n}}`).join("")}
