@@ -263,6 +263,13 @@
     plug: '<path d="M9 3.5V8M15 3.5V8M7 8h10v3a5 5 0 0 1-10 0zM12 16v4.5"/>',
     cover: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 9h16M4 12.5h16M12 16v2"/>',
     generic: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>',
+    close: '<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>',
+    power: '<path d="M12 4v8"/><path d="M7.1 7.1a7 7 0 1 0 9.8 0"/>',
+    play: '<path class="fill" d="M8 5.5v13l11-6.5z"/>',
+    pause: '<path d="M9.5 5.5v13M14.5 5.5v13" stroke-width="2.6"/>',
+    prev: '<path class="fill" d="M17 5.5v13L7 12z"/><path d="M6 5.5v13" stroke-width="2.2"/>',
+    next: '<path class="fill" d="M7 5.5v13L17 12z"/><path d="M18 5.5v13" stroke-width="2.2"/>',
+    dots: '<circle class="fill" cx="5.5" cy="12" r="1.6"/><circle class="fill" cx="12" cy="12" r="1.6"/><circle class="fill" cx="18.5" cy="12" r="1.6"/>',
   };
   const icon = (name, size, cls) =>
     `<svg class="ic ${cls || ""}" width="${size}" height="${size}" viewBox="0 0 24 24">${ICONS[name] || ICONS.generic}</svg>`;
@@ -925,8 +932,406 @@
   define("home2-weather", H2Weather);
 
   /* ------------------------------------------------------------------ *
-   * home2-device — toggleable device tile. Active devices get the filled
-   * gradient treatment.
+   * home2-popover — one overlay, shaped by what the entity actually is.
+   *
+   * A lamp is not a TV is not the aircon: each domain gets controls built
+   * for it rather than a generic toggle. HA's own more-info stays reachable
+   * from the header for settings/history — it just isn't the first thing
+   * you see. Lives on <body> so it can cover the screen from inside a card.
+   * ------------------------------------------------------------------ */
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const MODE_ICON = { off: "power", auto: "fan", cool: "snow", dry: "drop",
+                      heat: "bolt", heat_cool: "fan", fan_only: "wind" };
+  const MODE_COLOUR = { heat: "var(--h2-warn)", cool: "#4a8fd0", dry: "#4fa3c7",
+                        auto: "var(--h2-accent)", heat_cool: "var(--h2-accent)",
+                        fan_only: "var(--h2-e-grid)", off: "var(--h2-faint)" };
+
+  class H2Popover extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: "open" });
+      this._onKey = (e) => { if (e.key === "Escape") this.close(); };
+    }
+    _css() {
+      return `
+        :host{position:fixed;inset:0;z-index:9999;display:none}
+        :host([open]){display:grid;place-items:center}
+        .scrim{position:absolute;inset:0;background:rgba(24,24,52,.42);backdrop-filter:blur(3px)}
+        :host([dark]) .scrim{background:rgba(0,0,0,.66)}
+        .pop{position:relative;background:var(--h2-card);border-radius:28px;width:min(420px,calc(100vw - 36px));
+          max-height:calc(100vh - 40px);overflow-y:auto;box-shadow:var(--h2-shadow-lift);
+          animation:rise .3s cubic-bezier(.2,.9,.3,1)}
+        @keyframes rise{from{transform:translateY(16px) scale(.97);opacity:0}}
+        .head{display:flex;align-items:flex-start;gap:12px;padding:20px 22px 4px}
+        .rm{font-size:12.5px;color:var(--h2-faint);font-weight:600}
+        .nm{font-size:20px;font-weight:700;color:var(--h2-ink-strong);line-height:1.2}
+        .sub{font-size:13px;color:var(--h2-muted)}
+        .hbtns{margin-left:auto;display:flex;gap:8px}
+        .hbtn{background:var(--h2-card-soft);border:0;width:34px;height:34px;border-radius:50%;
+          color:var(--h2-muted);cursor:pointer;display:grid;place-items:center;
+          transition:background .18s,transform .18s}
+        .hbtn:hover{background:var(--h2-toggle-off);transform:scale(1.06)}
+        .body{padding:16px 22px 24px;display:flex;flex-direction:column;gap:18px}
+        .blk{display:flex;flex-direction:column;gap:9px}
+        .lbl{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--h2-faint)}
+        /* light */
+        .slab{height:210px;border-radius:24px;background:var(--h2-toggle-off);position:relative;
+          overflow:hidden;cursor:ns-resize;display:grid;place-items:end center;padding-bottom:16px;
+          user-select:none;touch-action:none}
+        .slab .fillv{position:absolute;left:0;right:0;bottom:0;height:0;
+          background:linear-gradient(0deg,var(--lampA),var(--lampB));transition:height .2s}
+        .slab .val{position:relative;font-size:16px;font-weight:700;color:var(--h2-ink-strong)}
+        .slab.on .val{color:#fff}
+        .swatches{display:flex;gap:10px;flex-wrap:wrap}
+        .swatches i{width:38px;height:38px;border-radius:50%;display:block;cursor:pointer;
+          box-shadow:inset 0 0 0 1px rgba(0,0,0,.07);transition:transform .16s cubic-bezier(.2,.8,.3,1)}
+        .swatches i:hover{transform:scale(1.1)}
+        .swatches i.sel{box-shadow:0 0 0 3px var(--h2-card),0 0 0 5px var(--h2-accent)}
+        /* shared chips */
+        .chips{display:flex;gap:8px;flex-wrap:wrap}
+        .chip{background:var(--h2-card-soft);border:0;font:inherit;border-radius:999px;padding:9px 15px;
+          font-size:13px;font-weight:700;color:var(--h2-muted);cursor:pointer;display:inline-flex;
+          align-items:center;gap:7px;transition:background .2s,color .2s,transform .16s}
+        .chip:hover{transform:translateY(-1px)}
+        .chip.sel{background:var(--h2-accent);color:#fff}
+        .chip.sel .ic *{stroke:#fff}
+        /* climate */
+        .dialwrap{display:grid;place-items:center;position:relative;padding:4px 0}
+        .dial{width:230px;height:230px;display:block}
+        .arc-bg{fill:none;stroke:var(--h2-toggle-off);stroke-width:14;stroke-linecap:round}
+        .arc-fg{fill:none;stroke:var(--dialC);stroke-width:14;stroke-linecap:round;
+          transition:stroke-dasharray .35s,stroke .35s}
+        .knob{fill:var(--h2-card);stroke:var(--dialC);stroke-width:4;transition:stroke .35s}
+        .dialcen{position:absolute;display:flex;flex-direction:column;align-items:center;
+          gap:1px;pointer-events:none}
+        .dialcen .mode{font-size:12.5px;font-weight:700;color:var(--h2-muted);
+          letter-spacing:.04em;text-transform:uppercase}
+        .dialcen .big{font-size:52px;font-weight:300;color:var(--h2-ink-strong);line-height:1;
+          letter-spacing:-.02em}
+        .dialcen .big sup{font-size:.34em;font-weight:500;vertical-align:super;color:var(--h2-muted)}
+        .dialcen .now{font-size:13px;color:var(--h2-muted);font-weight:600;margin-top:3px}
+        .steppers{display:flex;gap:14px;justify-content:center}
+        .step{width:46px;height:46px;border-radius:50%;border:0;background:var(--h2-card-soft);
+          color:var(--h2-ink-strong);cursor:pointer;display:grid;place-items:center;
+          transition:background .18s,transform .16s}
+        .step:hover{background:var(--h2-toggle-off);transform:translateY(-2px)}
+        .step:active{transform:scale(.94)}
+        /* media */
+        .art{height:130px;border-radius:18px;background:linear-gradient(135deg,var(--h2-hero-a),var(--h2-hero-b));
+          display:grid;place-items:center;color:rgba(255,255,255,.9);font-size:13px;font-weight:600;
+          background-size:cover;background-position:center;text-align:center;padding:10px}
+        .transport{display:flex;align-items:center;justify-content:center;gap:20px}
+        .tbtn{width:52px;height:52px;border-radius:50%;border:0;background:var(--h2-card-soft);
+          cursor:pointer;color:var(--h2-ink-strong);display:grid;place-items:center;
+          transition:background .18s,transform .16s}
+        .tbtn.main{width:62px;height:62px;background:var(--h2-accent);color:#fff}
+        .tbtn.main .ic *{stroke:#fff}
+        .tbtn:hover{transform:translateY(-2px)}
+        .tbtn:active{transform:scale(.94)}
+        .vol{height:8px;border-radius:999px;background:var(--h2-toggle-off);position:relative;
+          cursor:ew-resize;touch-action:none}
+        .vol i{position:absolute;left:0;top:0;bottom:0;border-radius:999px;background:var(--h2-accent)}
+        .vol b{position:absolute;top:50%;width:18px;height:18px;border-radius:50%;background:var(--h2-card);
+          box-shadow:var(--h2-shadow);transform:translate(-50%,-50%)}
+        .muted{font-size:13.5px;color:var(--h2-muted)}
+        @media(prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}`;
+    }
+    show(hass, entityId, cw) {
+      this._hass = hass; this._id = entityId; this._cw = cw || getColourway();
+      this.toggleAttribute("dark", !!(hass && hass.themes && hass.themes.darkMode));
+      this.setAttribute("open", "");
+      this._sig = null;
+      this._render();
+      document.addEventListener("keydown", this._onKey);
+    }
+    close() {
+      this.removeAttribute("open");
+      document.removeEventListener("keydown", this._onKey);
+      this._id = null;
+    }
+    set hass(h) { this._hass = h; if (this._id && this.hasAttribute("open")) this._render(); }
+    $(s) { return this.shadowRoot.querySelector(s); }
+    $$(s) { return [...this.shadowRoot.querySelectorAll(s)]; }
+    _st() { return this._hass && this._hass.states[this._id]; }
+    _call(domain, service, data) {
+      this._hass.callService(domain, service, Object.assign({ entity_id: this._id }, data || {}));
+    }
+    _render() {
+      const s = this._st();
+      if (!s) return;
+      // Only rebuild when something we draw has actually changed, so a drag
+      // isn't fought by an incoming state update mid-gesture.
+      const a = s.attributes;
+      const sig = [s.state, a.brightness, a.color_temp_kelvin, a.temperature,
+                   a.current_temperature, a.hvac_action, a.volume_level, a.source,
+                   a.media_title, this._dragging].join("|");
+      if (sig === this._sig) return;
+      this._sig = sig;
+      const domain = this._id.split(".")[0];
+      const build = this["_" + domain] || this._generic;
+      this.shadowRoot.innerHTML =
+        `<style>${themeCSS(this._cw)}${this._css()}</style>
+         <div class="scrim" id="scrim"></div><div class="pop">${this._head(s)}${build.call(this, s)}</div>`;
+      this.$("#scrim").addEventListener("click", () => this.close());
+      this.$("#close").addEventListener("click", () => this.close());
+      const mi = this.$("#more");
+      if (mi) mi.addEventListener("click", () => {
+        this.close();
+        this.dispatchEvent(new CustomEvent("hass-more-info",
+          { bubbles: true, composed: true, detail: { entityId: this._id } }));
+      });
+      this._bind(domain, s);
+    }
+    _head(s) {
+      const a = s.attributes;
+      const area = a.area || "";
+      return `<div class="head">
+        <div>${area ? `<div class="rm">${esc(area)}</div>` : ""}
+          <div class="nm">${esc(a.friendly_name || this._id)}</div>
+          <div class="sub">${esc(this._subtitle(s))}</div></div>
+        <div class="hbtns">
+          <button class="hbtn" id="more" title="Home Assistant details">${icon("dots", 17)}</button>
+          <button class="hbtn" id="close" title="Close">${icon("close", 17)}</button>
+        </div></div>`;
+    }
+    _subtitle(s) {
+      const d = this._id.split(".")[0], a = s.attributes;
+      if (d === "light") return s.state === "on"
+        ? `On · ${Math.round((a.brightness || 255) / 2.55)}%` : "Off";
+      if (d === "climate") return a.current_temperature != null
+        ? `Now ${a.current_temperature}° · target ${a.temperature ?? "—"}°` : capitalize(s.state);
+      if (d === "media_player") return a.media_title ? esc(a.media_title) : capitalize(s.state);
+      return capitalize(String(s.state).replace(/_/g, " "));
+    }
+
+    /* ---- light ---- */
+    _light(s) {
+      const a = s.attributes;
+      const on = s.state === "on";
+      const pct = on ? Math.round((a.brightness || 255) / 2.55) : 0;
+      const modes = a.supported_color_modes || [];
+      const dimmable = !(modes.length === 1 && modes[0] === "onoff");
+      const hasTemp = modes.includes("color_temp");
+      const kelvins = [2200, 2700, 3200, 4000, 5500];
+      const cur = a.color_temp_kelvin;
+      const sw = hasTemp ? `<div class="blk"><span class="lbl">Colour temperature</span>
+        <div class="swatches">${kelvins.map((k) =>
+          `<i data-k="${k}" class="${cur && Math.abs(cur - k) < 250 ? "sel" : ""}"
+             style="background:${kelvinHex(k)}"></i>`).join("")}</div></div>` : "";
+      const fx = (a.effect_list || []).length ? `<div class="blk"><span class="lbl">Effect</span>
+        <div class="chips">${a.effect_list.slice(0, 6).map((e) =>
+          `<button class="chip ${a.effect === e ? "sel" : ""}" data-fx="${esc(e)}">${esc(e)}</button>`
+        ).join("")}</div></div>` : "";
+      const lamp = cur ? kelvinHex(cur) : "#f0b45c";
+      return `<div class="body">
+        ${dimmable ? `<div class="slab ${on ? "on" : ""}" id="slab"
+          style="--lampA:${lamp};--lampB:${lamp}99">
+          <span class="fillv" style="height:${pct}%"></span>
+          <span class="val tnum" id="slabval">${on ? pct + "%" : "Off"}</span></div>`
+        : `<div class="chips"><button class="chip ${on ? "sel" : ""}" data-pw="on">On</button>
+             <button class="chip ${on ? "" : "sel"}" data-pw="off">Off</button></div>`}
+        ${sw}${fx}</div>`;
+    }
+
+    /* ---- climate ---- */
+    _climate(s) {
+      const a = s.attributes;
+      const on = s.state !== "off";
+      const lo = a.min_temp ?? 15, hi = a.max_temp ?? 30;
+      const target = a.temperature ?? lo;
+      const pct = clamp((target - lo) / (hi - lo || 1), 0, 1);
+      const C = 2 * Math.PI * 96 * 0.75;
+      const col = MODE_COLOUR[on ? s.state : "off"] || "var(--h2-accent)";
+      const ang = Math.PI * (0.75 + 1.5 * pct);
+      const modes = a.hvac_modes || ["off"];
+      return `<div class="body" style="--dialC:${col}">
+        <div class="dialwrap">
+          <svg class="dial" viewBox="0 0 240 240">
+            <path class="arc-bg" d="M 48 192 A 96 96 0 1 1 192 192" stroke-dasharray="${C.toFixed(1)} 999"/>
+            <path class="arc-fg" d="M 48 192 A 96 96 0 1 1 192 192" stroke-dasharray="${(C * pct).toFixed(1)} 999"/>
+            <circle class="knob" r="11" cx="${(120 - 96 * Math.cos(ang)).toFixed(1)}"
+              cy="${(120 - 96 * Math.sin(ang)).toFixed(1)}"/>
+          </svg>
+          <div class="dialcen">
+            <span class="mode">${esc(String(s.state).replace(/_/g, " "))}</span>
+            <span class="big tnum">${target}<sup>°C</sup></span>
+            ${a.current_temperature != null
+              ? `<span class="now tnum">${icon("thermo", 13)} ${a.current_temperature}°</span>` : ""}
+          </div>
+        </div>
+        <div class="steppers">
+          <button class="step" data-t="-1">${icon("minus", 20)}</button>
+          <button class="step" data-t="1">${icon("plus", 20)}</button></div>
+        <div class="blk"><span class="lbl">Mode</span><div class="chips">${modes.map((m) =>
+          `<button class="chip ${m === s.state ? "sel" : ""}" data-mode="${m}"
+            >${icon(MODE_ICON[m] || "generic", 15)} ${capitalize(m.replace(/_/g, " "))}</button>`).join("")}
+        </div></div>
+        ${(a.fan_modes || []).length ? `<div class="blk"><span class="lbl">Fan</span>
+          <div class="chips">${a.fan_modes.map((f) =>
+            `<button class="chip ${f === a.fan_mode ? "sel" : ""}" data-fan="${esc(f)}"
+              >${capitalize(f)}</button>`).join("")}</div></div>` : ""}
+      </div>`;
+    }
+
+    /* ---- media_player ---- */
+    _media_player(s) {
+      const a = s.attributes;
+      const playing = s.state === "playing";
+      const vol = a.volume_level == null ? 0 : a.volume_level;
+      const art = a.entity_picture ? `style="background-image:url('${esc(a.entity_picture)}')"` : "";
+      return `<div class="body">
+        <div class="art" ${art}>${a.entity_picture ? "" :
+          esc(a.media_title || (s.state === "off" ? "Nothing playing" : capitalize(s.state)))}</div>
+        <div class="transport">
+          <button class="tbtn" data-mp="media_previous_track">${icon("prev", 19)}</button>
+          <button class="tbtn main" data-mp="${playing ? "media_pause" : "media_play"}">
+            ${icon(playing ? "pause" : "play", 22)}</button>
+          <button class="tbtn" data-mp="media_next_track">${icon("next", 19)}</button>
+        </div>
+        <div class="blk"><span class="lbl">Volume</span>
+          <div class="vol" id="vol"><i style="width:${(vol * 100).toFixed(0)}%"></i>
+            <b style="left:${(vol * 100).toFixed(0)}%"></b></div></div>
+        ${(a.source_list || []).length ? `<div class="blk"><span class="lbl">Source</span>
+          <div class="chips">${a.source_list.slice(0, 8).map((src) =>
+            `<button class="chip ${src === a.source ? "sel" : ""}" data-src="${esc(src)}"
+              >${esc(src)}</button>`).join("")}</div></div>` : ""}
+      </div>`;
+    }
+
+    /* ---- cover ---- */
+    _cover(s) {
+      const open = ["open", "opening"].includes(s.state);
+      return `<div class="body"><div class="blk"><span class="lbl">Door</span>
+        <div class="chips">
+          <button class="chip ${open ? "sel" : ""}" data-cv="open_cover">${icon("up", 15)} Open</button>
+          <button class="chip" data-cv="stop_cover">${icon("pause", 15)} Stop</button>
+          <button class="chip ${open ? "" : "sel"}" data-cv="close_cover">${icon("down", 15)} Close</button>
+        </div></div>
+        <div class="muted">Last changed ${relDays(s.last_changed) || "recently"}.</div></div>`;
+    }
+
+    /* ---- vacuum ---- */
+    _vacuum(s) {
+      const cleaning = ["cleaning", "returning"].includes(s.state);
+      const bat = s.attributes.battery_level;
+      return `<div class="body"><div class="blk"><span class="lbl">${esc(s.attributes.friendly_name || "Vacuum")}</span>
+        <div class="chips">
+          <button class="chip ${cleaning ? "sel" : ""}" data-vac="start">${icon("play", 15)} Clean</button>
+          <button class="chip" data-vac="pause">${icon("pause", 15)} Pause</button>
+          <button class="chip" data-vac="return_to_base">${icon("home", 15)} Dock</button>
+        </div></div>
+        ${bat != null ? `<div class="muted tnum">Battery ${bat}%</div>` : ""}</div>`;
+    }
+
+    /* ---- anything else ---- */
+    _generic(s) {
+      const domain = this._id.split(".")[0];
+      const toggleable = DOMAIN_TOGGLE[domain];
+      return `<div class="body">
+        ${toggleable ? `<div class="chips">
+          <button class="chip ${stateOn(s.state) ? "sel" : ""}" data-pw="on">On</button>
+          <button class="chip ${stateOn(s.state) ? "" : "sel"}" data-pw="off">Off</button></div>` : ""}
+        <div class="muted">${esc(capitalize(String(s.state).replace(/_/g, " ")))}
+          · changed ${relDays(s.last_changed) || "recently"}</div></div>`;
+    }
+
+    _bind(domain, s) {
+      const on = (sel, fn) => this.$$(sel).forEach((el) => el.addEventListener("click", fn(el)));
+      // light
+      const slab = this.$("#slab");
+      if (slab) {
+        const set = (clientY, commit) => {
+          const r = slab.getBoundingClientRect();
+          const pct = Math.round(clamp((r.bottom - clientY) / r.height, 0, 1) * 100);
+          slab.querySelector(".fillv").style.height = pct + "%";
+          this.$("#slabval").textContent = pct > 0 ? pct + "%" : "Off";
+          slab.classList.toggle("on", pct > 0);
+          if (commit) {
+            this._dragging = false;
+            if (pct === 0) this._call("light", "turn_off");
+            else this._call("light", "turn_on", { brightness_pct: pct });
+          }
+        };
+        slab.addEventListener("pointerdown", (e) => {
+          this._dragging = true;
+          slab.setPointerCapture(e.pointerId);
+          set(e.clientY, false);
+          const mv = (ev) => set(ev.clientY, false);
+          const up = (ev) => { slab.removeEventListener("pointermove", mv);
+            slab.removeEventListener("pointerup", up); set(ev.clientY, true); };
+          slab.addEventListener("pointermove", mv);
+          slab.addEventListener("pointerup", up);
+        });
+      }
+      on("[data-k]", (el) => () =>
+        this._call("light", "turn_on", { color_temp_kelvin: +el.dataset.k }));
+      on("[data-fx]", (el) => () => this._call("light", "turn_on", { effect: el.dataset.fx }));
+      on("[data-pw]", (el) => () => {
+        const d = this._id.split(".")[0];
+        this._call(DOMAIN_TOGGLE[d] ? DOMAIN_TOGGLE[d][0] : "homeassistant",
+                   el.dataset.pw === "on" ? "turn_on" : "turn_off");
+      });
+      // climate
+      on("[data-t]", (el) => () => {
+        const a = this._st().attributes;
+        const stepv = a.target_temp_step || 0.5;
+        const next = clamp((a.temperature ?? a.min_temp ?? 18) + (+el.dataset.t) * stepv,
+                           a.min_temp ?? 7, a.max_temp ?? 35);
+        this._call("climate", "set_temperature", { temperature: +next.toFixed(1) });
+      });
+      on("[data-mode]", (el) => () =>
+        this._call("climate", "set_hvac_mode", { hvac_mode: el.dataset.mode }));
+      on("[data-fan]", (el) => () =>
+        this._call("climate", "set_fan_mode", { fan_mode: el.dataset.fan }));
+      // media
+      on("[data-mp]", (el) => () => this._call("media_player", el.dataset.mp));
+      on("[data-src]", (el) => () =>
+        this._call("media_player", "select_source", { source: el.dataset.src }));
+      const vol = this.$("#vol");
+      if (vol) {
+        const setv = (clientX, commit) => {
+          const r = vol.getBoundingClientRect();
+          const v = clamp((clientX - r.left) / r.width, 0, 1);
+          vol.querySelector("i").style.width = (v * 100).toFixed(0) + "%";
+          vol.querySelector("b").style.left = (v * 100).toFixed(0) + "%";
+          if (commit) { this._dragging = false;
+            this._call("media_player", "volume_set", { volume_level: +v.toFixed(2) }); }
+        };
+        vol.addEventListener("pointerdown", (e) => {
+          this._dragging = true; vol.setPointerCapture(e.pointerId); setv(e.clientX, false);
+          const mv = (ev) => setv(ev.clientX, false);
+          const up = (ev) => { vol.removeEventListener("pointermove", mv);
+            vol.removeEventListener("pointerup", up); setv(ev.clientX, true); };
+          vol.addEventListener("pointermove", mv); vol.addEventListener("pointerup", up);
+        });
+      }
+      // cover + vacuum
+      on("[data-cv]", (el) => () => this._call("cover", el.dataset.cv));
+      on("[data-vac]", (el) => () => this._call("vacuum", el.dataset.vac));
+    }
+  }
+  define("home2-popover", H2Popover);
+
+  /* Approximate a colour-temperature swatch for the kelvin presets. */
+  function kelvinHex(k) {
+    const stops = [[2200, "#e8871e"], [2700, "#eda557"], [3200, "#f3c48e"],
+                   [4000, "#fae3cb"], [5500, "#eaf0fa"], [6500, "#dce9fb"]];
+    let best = stops[0];
+    for (const st of stops) if (Math.abs(st[0] - k) < Math.abs(best[0] - k)) best = st;
+    return best[1];
+  }
+
+  /* Open the shared popover for an entity. */
+  function openPopover(hass, entityId, cw) {
+    let host = document.querySelector("home2-popover");
+    if (!host) { host = document.createElement("home2-popover"); document.body.appendChild(host); }
+    host.show(hass, entityId, cw);
+    return host;
+  }
+
+  /* ------------------------------------------------------------------ *
+   * home2-device — compact device tile: state at a glance, the one control
+   * you nearly always want inline, everything else in the popover.
    * config: { entity, name, room, icon, tap: "toggle"|"none"|"more-info" }
    * ------------------------------------------------------------------ */
   const DOMAIN_TOGGLE = {
@@ -935,77 +1340,130 @@
     climate: null, cover: null, vacuum: null, lock: null,
   };
   class H2Device extends H2Base {
+    /* Dimmable lights get a real slider on the card; everything else gets a
+       two-state segment. Either way the card stays about half the height of
+       the old tile and says more. */
+    _kind() {
+      const s = this._st(this._config.entity);
+      const domain = this._config.entity.split(".")[0];
+      if (this._config.control === "none") return "none";
+      if (domain !== "light") return "seg";
+      const modes = (s && s.attributes.supported_color_modes) || [];
+      return modes.length === 1 && modes[0] === "onoff" ? "seg" : "slider";
+    }
+    _segLabel() {
+      const d = this._config.entity.split(".")[0];
+      return d === "cover" ? "Open" : d === "vacuum" ? "Clean" : "On";
+    }
     _css() {
       return `
-        .card{min-height:150px;display:flex;flex-direction:column;justify-content:space-between;
-          overflow:hidden;transition:background .35s}
-        /* Ripple fires from the point of contact on a state change only —
-           the tile confirms it heard you, then goes quiet again. */
-        .ripple{position:absolute;width:340px;height:340px;border-radius:50%;pointer-events:none;
-          transform:translate(-50%,-50%) scale(0);opacity:.26;background:currentColor;
-          color:var(--h2-accent)}
-        :host([on]) .ripple{color:#fff}
-        @keyframes h2-ripple{to{transform:translate(-50%,-50%) scale(1);opacity:0}}
-        .ripple.go{animation:h2-ripple .58s cubic-bezier(.25,.7,.35,1) forwards}
-        .top{display:flex;justify-content:space-between;align-items:flex-start}
-        .top .ic{color:var(--h2-accent)}
-        .room{font-size:12px;color:var(--h2-muted);font-weight:600;margin-bottom:2px}
-        .bottom{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
-        .name{font-size:16.5px;font-weight:700;color:var(--h2-ink-strong)}
-        .state{font-size:14px;font-weight:600;color:var(--h2-muted);white-space:nowrap}
-        .toggle{width:46px;height:26px;border-radius:999px;background:var(--h2-toggle-off);position:relative;flex:none;transition:background .25s}
-        .toggle::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;
-          background:var(--h2-knob-off);box-shadow:0 2px 5px rgba(20,24,60,.25);transition:left .25s, background .25s}
-        :host([on]) .card{background:linear-gradient(140deg,var(--h2-fill-a),var(--h2-fill-b));box-shadow:var(--h2-shadow-lift)}
-        :host([on]) .top .ic{color:var(--h2-on-fill)}
-        :host([on]) .room,:host([on]) .state{color:var(--h2-on-fill-dim)}
-        :host([on]) .name{color:var(--h2-on-fill)}
-        :host([on]) .toggle{background:rgba(255,255,255,.35)}
-        :host([on]) .toggle::after{left:23px;background:#fff}
-        :host([unavailable]) .card{opacity:.55;cursor:default}`;
+        .card{padding:13px 15px 14px;display:flex;flex-direction:column;gap:11px;overflow:hidden}
+        .row{display:flex;align-items:center;gap:11px}
+        .ic{width:38px;height:38px;border-radius:11px;flex:none;display:grid;place-items:center;
+          background:var(--h2-card-soft);color:var(--h2-muted);transition:background .3s,color .3s}
+        :host([on]) .ic{background:var(--h2-accent-soft);color:var(--h2-accent)}
+        .txt{display:flex;flex-direction:column;min-width:0;line-height:1.25;flex:1}
+        .nm{font-size:14.5px;font-weight:700;color:var(--h2-ink-strong);
+          white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .st{font-size:12.5px;color:var(--h2-muted);font-weight:600}
+        :host([on]) .st{color:var(--h2-accent)}
+        .bar{height:38px;border-radius:12px;background:var(--h2-toggle-off);position:relative;
+          overflow:hidden;cursor:ew-resize;display:flex;align-items:center;padding:0 12px;
+          touch-action:none;user-select:none}
+        .bar .fillx{position:absolute;left:0;top:0;bottom:0;width:0;
+          background:linear-gradient(90deg,var(--h2-fill-a),var(--h2-fill-b));transition:width .25s}
+        .bar .bi{position:relative;color:var(--h2-muted);display:grid;place-items:center;transition:color .25s}
+        :host([on]) .bar .bi{color:#fff}
+        .bar .gl{position:relative;margin-left:auto;font-size:12.5px;font-weight:700;
+          color:var(--h2-muted);transition:color .25s}
+        :host([on]) .bar .gl{color:rgba(255,255,255,.9)}
+        .seg{display:flex;background:var(--h2-toggle-off);border-radius:12px;padding:3px;gap:3px}
+        .seg button{flex:1;border:0;background:none;font:inherit;font-size:12.5px;font-weight:700;
+          color:var(--h2-muted);padding:7px 0;border-radius:9px;cursor:pointer;
+          transition:background .2s,color .2s}
+        .seg button.sel{background:var(--h2-card);color:var(--h2-accent);box-shadow:var(--h2-shadow)}
+        :host([unavailable]) .card{opacity:.55}
+        :host([unavailable]) .card{cursor:default}`;
     }
     _html() {
       const c = this._config;
       const domain = c.entity.split(".")[0];
       const ic = c.icon || DOMAIN_ICONS[domain] || "plug";
+      const kind = this._kind();
+      const control = kind === "slider"
+        ? `<div class="bar" id="bar"><span class="fillx" id="fillx"></span>
+             <span class="bi">${icon(ic, 17)}</span><span class="gl tnum" id="gl"></span></div>`
+        : kind === "seg"
+        ? `<div class="seg" id="seg">
+             <button data-v="off">Off</button>
+             <button data-v="on">${esc(this._segLabel())}</button></div>`
+        : "";
       return `<div class="card h2-tap" tabindex="0" role="button">
-        <span class="ripple" id="rp"></span>
-        <div class="top">${icon(ic, 34)}<div class="toggle" id="tg"></div></div>
-        <div class="bottom">
-          <div>${c.room ? `<div class="room">${esc(c.room)}</div>` : ""}<div class="name" id="nm"></div></div>
-          <div class="state" id="st"></div>
-        </div>
+        <div class="row"><span class="ic">${icon(ic, 21)}</span>
+          <span class="txt"><span class="nm" id="nm"></span><span class="st" id="st"></span></span>
+        </div>${control}
       </div>`;
     }
     _bind() {
-      // The switch toggles; the card body opens more-info. HA already builds
-      // the right panel per domain — brightness and colour for a light,
-      // transport for a media player, setpoint and modes for climate — and
-      // defaulting the body to `toggle` stood in front of all of it.
-      const act = (ev) => {
-        const tap = this._config.tap || "more-info";
-        if (tap === "toggle") { this._ripple(ev); this._toggle(); }
+      // The inline control does the one thing you nearly always want; the rest
+      // of the card opens the popover, which is shaped by the domain.
+      const open = () => {
+        const tap = this._config.tap || "popover";
+        if (tap === "toggle") this._toggle();
         else if (tap === "more-info") this._moreInfo();
+        else this._pop = openPopover(this._hass, this._config.entity, this._cw());
       };
-      this.$("#tg").addEventListener("click", (ev) => {
-        ev.stopPropagation(); this._ripple(ev); this._toggle();
-      });
       const card = this.$(".card");
-      card.addEventListener("click", act);
-      card.addEventListener("keydown", (ev) => {
-        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); act(ev); }
+      card.addEventListener("click", (ev) => {
+        if (ev.target.closest("#bar") || ev.target.closest("#seg")) return;
+        open();
       });
-    }
-    _ripple(ev) {
-      const rp = this.$("#rp"), card = this.$(".card");
-      if (!rp || !card) return;
-      const box = card.getBoundingClientRect();
-      const hasPoint = ev && ev.clientX != null && (ev.clientX || ev.clientY);
-      rp.style.left = (hasPoint ? ev.clientX - box.left : box.width / 2) + "px";
-      rp.style.top = (hasPoint ? ev.clientY - box.top : box.height / 2) + "px";
-      rp.classList.remove("go");
-      void rp.offsetWidth; // restart the animation
-      rp.classList.add("go");
+      card.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); open(); }
+      });
+      const seg = this.$("#seg");
+      if (seg) seg.addEventListener("click", (ev) => {
+        const b = ev.target.closest("button");
+        if (!b) return;
+        ev.stopPropagation();
+        const id = this._config.entity, domain = id.split(".")[0];
+        const want = b.dataset.v === "on";
+        if (domain === "cover") this._hass.callService("cover", want ? "open_cover" : "close_cover", { entity_id: id });
+        else if (domain === "vacuum") this._hass.callService("vacuum", want ? "start" : "return_to_base", { entity_id: id });
+        else if (domain === "climate") this._hass.callService("climate", want ? "turn_on" : "turn_off", { entity_id: id });
+        else {
+          const svc = DOMAIN_TOGGLE[domain];
+          this._hass.callService(svc ? svc[0] : "homeassistant", want ? "turn_on" : "turn_off", { entity_id: id });
+        }
+      });
+      const bar = this.$("#bar");
+      if (bar) {
+        const set = (clientX, commit) => {
+          const r = bar.getBoundingClientRect();
+          const pct = Math.round(clamp((clientX - r.left) / r.width, 0, 1) * 100);
+          this.$("#fillx").style.width = pct + "%";
+          this.$("#gl").textContent = pct > 0 ? pct + "%" : "Off";
+          this.toggleAttribute("on", pct > 0);
+          if (commit) {
+            this._dragging = false;
+            const id = this._config.entity;
+            if (pct === 0) this._hass.callService("light", "turn_off", { entity_id: id });
+            else this._hass.callService("light", "turn_on", { entity_id: id, brightness_pct: pct });
+          }
+        };
+        bar.addEventListener("click", (ev) => ev.stopPropagation());
+        bar.addEventListener("pointerdown", (ev) => {
+          ev.stopPropagation();
+          this._dragging = true;
+          bar.setPointerCapture(ev.pointerId);
+          set(ev.clientX, false);
+          const mv = (e2) => set(e2.clientX, false);
+          const up = (e2) => { bar.removeEventListener("pointermove", mv);
+            bar.removeEventListener("pointerup", up); set(e2.clientX, true); };
+          bar.addEventListener("pointermove", mv);
+          bar.addEventListener("pointerup", up);
+        });
+      }
     }
     _moreInfo() {
       this.dispatchEvent(new CustomEvent("hass-more-info",
@@ -1042,12 +1500,33 @@
     _update() {
       const s = this._st(this._config.entity);
       if (!s) return;
+      const on = stateOn(s.state);
       this.$("#nm").textContent = this._config.name || this._name(this._config.entity);
-      this.$("#st").textContent = this._stateLabel(s);
-      this.toggleAttribute("on", stateOn(s.state));
       this.toggleAttribute("unavailable", s.state === "unavailable");
+
+      const bar = this.$("#bar");
+      if (bar) {
+        // Don't fight the user's finger with an incoming state update.
+        if (!this._dragging) {
+          const pct = on ? Math.round((s.attributes.brightness || 255) / 2.55) : 0;
+          this.$("#fillx").style.width = pct + "%";
+          this.$("#gl").textContent = pct > 0 ? pct + "%" : "Off";
+          this.$("#st").textContent = on ? `On · ${pct}%` : this._stateLabel(s);
+          this.toggleAttribute("on", on);
+        }
+      } else {
+        this.$("#st").textContent = this._stateLabel(s);
+        this.toggleAttribute("on", on);
+      }
+
+      const seg = this.$("#seg");
+      if (seg) seg.querySelectorAll("button").forEach((b) =>
+        b.classList.toggle("sel", (b.dataset.v === "on") === on));
+
+      // Keep an open popover live while this card is the one that opened it.
+      if (this._pop && this._pop.hasAttribute("open")) this._pop.hass = this._hass;
     }
-    getCardSize() { return 2; }
+    getCardSize() { return 1; }
   }
   define("home2-device", H2Device);
 
