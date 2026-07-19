@@ -30,6 +30,15 @@
   "use strict";
   const VERSION = "0.2.0";
 
+  /* This file can legitimately be evaluated twice — once at frontend bootstrap
+     via `frontend: extra_module_url:`, and again as a HACS Lovelace resource,
+     whose ?hacstag= query string makes the browser treat it as a separate
+     module. Defining an existing tag throws and would abort the rest of the
+     module, so every registration is idempotent. */
+  const define = (tag, cls) => {
+    if (!customElements.get(tag)) customElements.define(tag, cls);
+  };
+
   /* ------------------------------------------------------------------ *
    * Colourways
    * ------------------------------------------------------------------ */
@@ -183,6 +192,8 @@
   };
   const cardShell = `
     :host{display:block}
+    /* A card that hides itself needs to beat :host{display:block}. */
+    :host([hidden]){display:none}
     .card{background:var(--h2-card);border-radius:var(--h2-radius);box-shadow:var(--h2-shadow);
       padding:24px;position:relative;height:100%;min-height:0}
 
@@ -383,6 +394,8 @@
            height. Giving the host the stretched cell height makes it resolve. */
         .cell>*{height:100%}
         .cell.sect>*{height:auto}
+        /* A card that has taken itself off the board shouldn't leave its gap. */
+        .cell:has(>[hidden]){display:none}
         .cell.sect{align-self:end;padding:14px 4px 0;}
         .cell.sect h2{font-size:14px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--h2-muted);}
         ${[1,2,3,4,5,6,7,8,9,10,11,12].map(n=>`.c${n}{grid-column:span ${n}}`).join("")}
@@ -417,7 +430,7 @@
     _update() { (this._children || []).forEach((el) => { try { el.hass = this._hass; } catch (e) {} }); }
     getCardSize() { return 12; }
   }
-  customElements.define("home2-layout", H2Layout);
+  define("home2-layout", H2Layout);
 
   /* ------------------------------------------------------------------ *
    * home2-chips — pill chips row.
@@ -465,7 +478,7 @@
     }
     getCardSize() { return 1; }
   }
-  customElements.define("home2-chips", H2Chips);
+  define("home2-chips", H2Chips);
 
   /* ------------------------------------------------------------------ *
    * home2-clock — date, clock, family presence, greeting.
@@ -545,7 +558,7 @@
       });
     }
   }
-  customElements.define("home2-clock", H2Clock);
+  define("home2-clock", H2Clock);
 
   /* ------------------------------------------------------------------ *
    * home2-status — "Right now" list.
@@ -643,7 +656,7 @@
       return shown;
     }
   }
-  customElements.define("home2-status", H2Status);
+  define("home2-status", H2Status);
 
   /* ------------------------------------------------------------------ *
    * home2-weather — hero card with ambient animated sky.
@@ -906,7 +919,7 @@
     }
     getCardSize() { return 5; }
   }
-  customElements.define("home2-weather", H2Weather);
+  define("home2-weather", H2Weather);
 
   /* ------------------------------------------------------------------ *
    * home2-device — toggleable device tile. Active devices get the filled
@@ -1029,7 +1042,7 @@
     }
     getCardSize() { return 2; }
   }
-  customElements.define("home2-device", H2Device);
+  define("home2-device", H2Device);
 
   /* ------------------------------------------------------------------ *
    * home2-energy — solar / battery / grid / home hub with animated flows.
@@ -1150,17 +1163,19 @@
     }
     getCardSize() { return 5; }
   }
-  customElements.define("home2-energy", H2Energy);
+  define("home2-energy", H2Energy);
 
   /* ------------------------------------------------------------------ *
    * home2-batteries — labelled battery bars.
    * config: { title, low: 35, items: [{entity, name}] }
    * ------------------------------------------------------------------ */
   /* Two kinds of battery, judged on different questions.
-     A rechargeable pack answers "will it last the day" — it recovers tonight.
-     A replaceable cell answers "do I need to buy one" — it never recovers, so
-     its amber band starts far earlier and its low state is an errand. */
-  const BAT_BANDS = { pack: { crit: 20, warn: 60 }, cell: { crit: 25, warn: 60 } };
+     A rechargeable pack answers "will it last the day" — it recovers tonight,
+     so 55% is worth flagging in the same way the stock dashboard flags it.
+     A replaceable cell answers "do I need to buy one", which is a real errand
+     and shouldn't be raised early: a coin cell sits near full for months, so
+     anything above 20% is simply not news. */
+  const BAT_BANDS = { pack: { crit: 20, warn: 60 }, cell: { crit: 15, warn: 20 } };
   const batLevel = (pct, kind, cfg) => {
     const band = Object.assign({}, BAT_BANDS[kind] || BAT_BANDS.pack);
     if (cfg && cfg.crit != null) band.crit = cfg.crit;
@@ -1281,7 +1296,7 @@
     }
     getCardSize() { return Math.max(2, Math.ceil(((this._config.items || []).length + 1) / 2)); }
   }
-  customElements.define("home2-batteries", H2Batteries);
+  define("home2-batteries", H2Batteries);
 
   /* ------------------------------------------------------------------ *
    * home2-alerts — "Needs attention".
@@ -1293,7 +1308,12 @@
    *               stale backup). Never animates: a thing that pulses for
    *               three days becomes wallpaper.
    *
-   * config: { title, hide_when_clear: false, alerts: [
+   * The card removes itself when nothing is active — "needs attention" with
+   * nothing in it is a contradiction, and a permanent reassurance badge is
+   * just another thing to learn to ignore. Omit an alert's `off:` text (the
+   * normal case) and it stays silent until it fires.
+   *
+   * config: { title, alerts: [
    *   { entity, kind: "event"|"condition", icon, on: "Mail waiting",
    *     off: "No mail", severity: "warn"|"crit"|"accent", invert: false },
    *   { type: "battery", entity, name, kind: "cell", crit: 25, warn: 60 } ] }
@@ -1309,9 +1329,6 @@
         .a[data-sev=warn]{background:var(--h2-warn-soft);color:var(--h2-warn)}
         .a[data-sev=accent]{background:var(--h2-accent-soft);color:var(--h2-accent)}
         .a[data-sev=quiet]{background:var(--h2-card-soft);color:var(--h2-muted);font-weight:600}
-        .clear{font-size:13.5px;font-weight:600;color:var(--h2-muted);margin-top:15px;
-          display:flex;align-items:center;gap:9px}
-        .clear .ic{color:var(--h2-good)}
         @keyframes h2-arrive{
           0%{transform:scale(.82);opacity:0}
           55%{transform:scale(1.06);opacity:1}
@@ -1324,8 +1341,7 @@
     }
     _html() {
       return `<div class="card"><div class="h2-label">${esc(this._config.title || "Needs attention")}</div>
-        <div class="bar" id="bar"></div>
-        <div class="clear" id="clear" hidden>${icon("home", 18)}<span>All clear</span></div></div>`;
+        <div class="bar" id="bar"></div></div>`;
     }
     /* Returns the alert to show for an item, or null to omit it entirely. */
     _resolve(it) {
@@ -1391,14 +1407,12 @@
       }
       this._prevActive = active;
 
-      const clear = this.$("#clear");
-      const nothing = active.length === 0;
-      clear.hidden = !(nothing && this._config.hide_when_clear !== true);
-      bar.hidden = nothing && this._config.hide_when_clear === true;
+      // Nothing active — take the whole card out of the grid.
+      this.toggleAttribute("hidden", active.length === 0);
     }
     getCardSize() { return 2; }
   }
-  customElements.define("home2-alerts", H2Alerts);
+  define("home2-alerts", H2Alerts);
 
   /* ------------------------------------------------------------------ *
    * home2-room — room summary: big temperature with trend, pills, toggle.
@@ -1509,7 +1523,7 @@
     }
     getCardSize() { return 2; }
   }
-  customElements.define("home2-room", H2Room);
+  define("home2-room", H2Room);
 
   /* ------------------------------------------------------------------ *
    * home2-thermostat — climate control: big current temp, target ±, modes.
@@ -1576,7 +1590,7 @@
     }
     getCardSize() { return 4; }
   }
-  customElements.define("home2-thermostat", H2Thermostat);
+  define("home2-thermostat", H2Thermostat);
 
   /* ------------------------------------------------------------------ *
    * home2-zone — number-entity damper/percentage row with − / + and a bar.
@@ -1628,7 +1642,7 @@
     }
     getCardSize() { return 1; }
   }
-  customElements.define("home2-zone", H2Zone);
+  define("home2-zone", H2Zone);
 
   /* ------------------------------------------------------------------ *
    * home2-camera — rounded camera snapshot with name pill, auto-refresh.
@@ -1677,7 +1691,7 @@
     }
     getCardSize() { return 4; }
   }
-  customElements.define("home2-camera", H2Camera);
+  define("home2-camera", H2Camera);
 
   /* ------------------------------------------------------------------ *
    * home2-theme — colourway picker. Persists to localStorage per browser.
@@ -1720,14 +1734,16 @@
     }
     getCardSize() { return 2; }
   }
-  customElements.define("home2-theme", H2Theme);
+  define("home2-theme", H2Theme);
 
   /* ------------------------------------------------------------------ *
    * Registration
    * ------------------------------------------------------------------ */
   window.customCards = window.customCards || [];
-  const reg = (type, name, description) =>
+  const reg = (type, name, description) => {
+    if (window.customCards.some((c) => c.type === type)) return;
     window.customCards.push({ type, name, description, preview: false });
+  };
   reg("home2-layout", "Home 2.0 Layout", "12-column grid layout that hosts the Home 2.0 cards");
   reg("home2-chips", "Home 2.0 Chips", "Pill status chips row");
   reg("home2-clock", "Home 2.0 Clock", "Clock, date, family presence and greeting");
