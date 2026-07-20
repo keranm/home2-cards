@@ -28,7 +28,7 @@
  */
 (function () {
   "use strict";
-  const VERSION = "0.4.1";
+  const VERSION = "0.4.2";
 
   /* This file can legitimately be evaluated twice — once at frontend bootstrap
      via `frontend: extra_module_url:`, and again as a HACS Lovelace resource,
@@ -1413,7 +1413,7 @@
       const thumb = this.$("#thumb");
       const w = bar.clientWidth;
       if (!w) { requestAnimationFrame(() => this._paintBar(pct)); return; } // not laid out yet
-      const TW = 30, PAD = 4;
+      const TW = 32, PAD = 3;   // match the segment button's inset
       thumb.style.left = clamp((pct / 100) * w - TW / 2, PAD, w - TW - PAD) + "px";
     }
     _css() {
@@ -1435,8 +1435,10 @@
           background:linear-gradient(90deg,var(--h2-fill-a),var(--h2-fill-b));transition:width .25s}
         /* The icon is the handle — it rides the fill edge, so the control
            looks like the thing it is instead of a bar with a badge on it. */
-        .bar .thumb{position:absolute;top:4px;left:0;width:30px;height:30px;border-radius:9px;
-          background:var(--h2-card);box-shadow:0 1px 3px rgba(20,24,60,.22);
+        /* Same inset, radius, fill and shadow as a selected segment button,
+           so a slider and a segment sit identically in their track. */
+        .bar .thumb{position:absolute;top:3px;left:0;width:32px;height:32px;border-radius:9px;
+          background:var(--h2-card);box-shadow:var(--h2-shadow);
           display:grid;place-items:center;color:var(--h2-accent);transition:left .25s}
         .bar.dragging .fillx,.bar.dragging .thumb{transition:none}
         .bar .gl{position:relative;margin-left:auto;font-size:12.5px;font-weight:700;
