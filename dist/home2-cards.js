@@ -28,7 +28,7 @@
  */
 (function () {
   "use strict";
-  const VERSION = "0.3.1";
+  const VERSION = "0.4.0";
 
   /* This file can legitimately be evaluated twice — once at frontend bootstrap
      via `frontend: extra_module_url:`, and again as a HACS Lovelace resource,
@@ -1343,9 +1343,10 @@
     /* Dimmable lights get a real slider on the card; everything else gets a
        two-state segment. Either way the card stays about half the height of
        the old tile and says more. */
-    /* Only entities you can actually act on get a control. A contact sensor
-       reporting the garage door is read-only — offering it an Off/On segment
-       promises something the card can't deliver. */
+    /* A real device is often several entities: the garage door is a contact
+       sensor that knows the state, a relay that acts, and an automation
+       tying them together. `action:` lets a card read one and drive another
+       instead of assuming the state entity is also the control. */
     _controllable() {
       const d = this._config.entity.split(".")[0];
       return ["light", "switch", "fan", "input_boolean", "media_player", "climate",
@@ -1354,10 +1355,38 @@
     _kind() {
       const s = this._st(this._config.entity);
       const domain = this._config.entity.split(".")[0];
-      if (this._config.control === "none" || !this._controllable()) return "none";
+      if (this._config.control === "none") return "none";
+      if (this._config.action) return "action";
+      if (!this._controllable()) return "none";
       if (domain !== "light") return "seg";
       const modes = (s && s.attributes.supported_color_modes) || [];
       return modes.length === 1 && modes[0] === "onoff" ? "seg" : "slider";
+    }
+    /* What pressing the action button will do, given where the thing is now.
+       A momentary relay has no "on" state to reflect — only a next move. */
+    _actionLabel() {
+      const a = this._config.action;
+      const s = this._st(this._config.entity);
+      const isOn = s ? stateOn(s.state) : false;
+      const labels = a.labels || ["Open", "Close"];
+      return isOn ? labels[1] : labels[0];
+    }
+    _fireAction() {
+      const a = this._config.action;
+      const id = a.entity;
+      const domain = id.split(".")[0];
+      if (a.service) {
+        const [d, sv] = a.service.split(".");
+        return this._hass.callService(d, sv, Object.assign({ entity_id: id }, a.data || {}));
+      }
+      // A momentary/inching relay self-releases, so turn_on *is* the press.
+      if (domain === "switch") return this._hass.callService(
+        "switch", a.momentary === false ? "toggle" : "turn_on", { entity_id: id });
+      if (domain === "button") return this._hass.callService("button", "press", { entity_id: id });
+      if (domain === "script") return this._hass.callService("script", "turn_on", { entity_id: id });
+      if (domain === "scene") return this._hass.callService("scene", "turn_on", { entity_id: id });
+      if (domain === "automation") return this._hass.callService("automation", "trigger", { entity_id: id });
+      return this._hass.callService("homeassistant", "toggle", { entity_id: id });
     }
     /* Say what the action does, in the words the device uses. */
     _segLabels() {
@@ -1418,6 +1447,13 @@
           color:var(--h2-muted);padding:7px 0;border-radius:9px;cursor:pointer;
           transition:background .2s,color .2s}
         .seg button.sel{background:var(--h2-card);color:var(--h2-accent);box-shadow:var(--h2-shadow)}
+        /* Momentary action: one button saying what the next press will do. */
+        .act{height:38px;width:100%;border:0;border-radius:12px;background:var(--h2-accent-soft);
+          color:var(--h2-accent);font:inherit;font-size:13px;font-weight:700;cursor:pointer;
+          display:grid;place-items:center;transition:background .2s,transform .14s}
+        .act:hover{background:var(--h2-accent);color:#fff}
+        .act:active{transform:scale(.975)}
+        .act.busy{opacity:.6;pointer-events:none}
         :host([unavailable]) .card{opacity:.55}
         :host([unavailable]) .card{cursor:default}`;
     }
@@ -1435,6 +1471,8 @@
             return `<div class="seg" id="seg">
               <button data-v="off">${esc(off)}</button>
               <button data-v="on">${esc(on)}</button></div>`; })()
+        : kind === "action"
+        ? `<button class="act" id="act"><span id="actlbl"></span></button>`
         : "";
       return `<div class="card h2-tap" tabindex="0" role="button">
         <div class="row"><span class="ic">${icon(ic, 21)}</span>
@@ -1474,6 +1512,16 @@
           this._hass.callService(svc ? svc[0] : "homeassistant", want ? "turn_on" : "turn_off", { entity_id: id });
         }
       });
+      const act = this.$("#act");
+      if (act) act.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        this._fireAction();
+        // A door takes time to move; brief feedback beats a button that
+        // looks ignored until the sensor catches up.
+        act.classList.add("busy");
+        setTimeout(() => act.classList.remove("busy"), 1500);
+      });
+
       const bar = this.$("#bar");
       if (bar) {
         const set = (clientX, commit) => {
@@ -1560,6 +1608,9 @@
       const seg = this.$("#seg");
       if (seg) seg.querySelectorAll("button").forEach((b) =>
         b.classList.toggle("sel", (b.dataset.v === "on") === on));
+
+      const actlbl = this.$("#actlbl");
+      if (actlbl) actlbl.textContent = this._actionLabel();
 
       // Keep an open popover live while this card is the one that opened it.
       if (this._pop && this._pop.hasAttribute("open")) this._pop.hass = this._hass;
